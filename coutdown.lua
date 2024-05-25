@@ -4,13 +4,14 @@ countdown_time = 180  -- 初期設定のカウントダウン時間（秒）
 current_time = countdown_time  -- 現在のカウントダウン時間
 text_source_name = ""  -- カウントダウンを表示するテキストソース名
 image_source_name = ""  -- 表示する画像ソース名
+media_source_name = ""  -- 再生するメディアソース名
 is_paused = false
 timer_active = false
 fade_enabled = true  -- 画像をフェードアウトするかどうか
 fade_duration = 1000  -- フェードアウトの時間（ミリ秒）
-display_duration = 1000  -- 画像の表示時間（ミリ秒）
 fade_step = 50  -- フェードアウトのステップ時間（ミリ秒）
 current_alpha = 255  -- 現在の透明度（初期値：255）
+show_duration = 1000  -- 画像を表示する時間（ミリ秒）
 
 hotkey_pause_id = obs.OBS_INVALID_HOTKEY_ID
 hotkey_reset_id = obs.OBS_INVALID_HOTKEY_ID
@@ -24,9 +25,10 @@ function script_properties()
     obs.obs_properties_add_int(props, "countdown_time", "カウントダウン時間（秒）", 1, 3600, 1)
     obs.obs_properties_add_text(props, "text_source_name", "テキストソース名", obs.OBS_TEXT_DEFAULT)
     obs.obs_properties_add_text(props, "image_source_name", "画像ソース名", obs.OBS_TEXT_DEFAULT)
+    obs.obs_properties_add_text(props, "media_source_name", "メディアソース名", obs.OBS_TEXT_DEFAULT)
     obs.obs_properties_add_bool(props, "fade_enabled", "画像をフェードアウト")
     obs.obs_properties_add_int(props, "fade_duration", "フェードアウトの時間（ミリ秒）", 100, 10000, 100)
-    obs.obs_properties_add_int(props, "display_duration", "画像の表示時間（ミリ秒）", 100, 10000, 100)
+    obs.obs_properties_add_int(props, "show_duration", "表示時間（ミリ秒）", 100, 10000, 100)
     obs.obs_properties_add_button(props, "pause_button", "開始/一時停止/再開", toggle_pause)
     obs.obs_properties_add_button(props, "reset_button", "リセット", reset_timer)
     return props
@@ -37,9 +39,10 @@ function script_update(settings)
     current_time = countdown_time
     text_source_name = obs.obs_data_get_string(settings, "text_source_name")
     image_source_name = obs.obs_data_get_string(settings, "image_source_name")
+    media_source_name = obs.obs_data_get_string(settings, "media_source_name")
     fade_enabled = obs.obs_data_get_bool(settings, "fade_enabled")
     fade_duration = obs.obs_data_get_int(settings, "fade_duration")
-    display_duration = obs.obs_data_get_int(settings, "display_duration")
+    show_duration = obs.obs_data_get_int(settings, "show_duration")
 end
 
 function format_text(text)
@@ -64,20 +67,12 @@ function show_image_source()
     if source then
         obs.obs_source_set_enabled(source, true)
         set_image_alpha(source, current_alpha)
-        obs.timer_add(hide_image_source, display_duration)  -- 一定時間後に画像を非表示
-    end
-end
-
-function hide_image_source()
-    if fade_enabled then
-        obs.timer_add(fade_out_image_source, fade_step)  -- フェードアウトを開始
-    else
-        local source = obs.obs_get_source_by_name(image_source_name)
-        if source then
-            obs.obs_source_set_enabled(source, false)
+        if fade_enabled then
+            obs.timer_add(fade_out_image_source, fade_step)  -- フェードアウトを開始
+        else
+            obs.timer_add(cut_out_image_source, show_duration)  -- 指定時間後にカットアウトを開始
         end
     end
-    obs.timer_remove(hide_image_source)
 end
 
 function fade_out_image_source()
@@ -95,6 +90,14 @@ function fade_out_image_source()
     end
 end
 
+function cut_out_image_source()
+    local source = obs.obs_get_source_by_name(image_source_name)
+    if source then
+        obs.obs_source_set_enabled(source, false)
+        obs.timer_remove(cut_out_image_source)
+    end
+end
+
 function set_image_alpha(source, alpha)
     local filter = obs.obs_source_get_filter_by_name(source, "フェードアウトフィルター")
     if not filter then
@@ -108,6 +111,14 @@ function set_image_alpha(source, alpha)
     obs.obs_data_set_int(settings, "opacity", math.floor(alpha))
     obs.obs_source_update(filter, settings)
     obs.obs_data_release(settings)
+end
+
+function play_media_source()
+    local source = obs.obs_get_source_by_name(media_source_name)
+    if source then
+        obs.obs_source_media_restart(source)
+        obs.obs_source_release(source)
+    end
 end
 
 function timer_callback()
@@ -133,7 +144,8 @@ function toggle_pause(pressed)
             timer_active = true
             is_paused = false
             obs.timer_add(timer_callback, 1000)
-            show_image_source()  -- 画像ソースを表示
+            show_image_source()  -- 画像ソースを表示してフェードアウトを開始
+            play_media_source()  -- メディアソースを再生
         else
             is_paused = not is_paused
         end
